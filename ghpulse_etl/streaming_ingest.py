@@ -620,7 +620,7 @@ if __name__ == '__main__':
     ingestor = DualConnectionIngestor()
     
     # 处理单个小时
-    ingestor.ingest_hour(2024, 1, 1, 15)
+    ingestor.ingest_hour(2025, 12, 21, 15)
     
     # 或处理整天
     # ingestor.ingest_day(2024, 1, 1)

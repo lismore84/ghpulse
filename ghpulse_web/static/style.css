@@ -1,0 +1,176 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: #f5f7fa;
+}
+
+/* 顶部栏 */
+.el-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+}
+
+.header-content {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-content h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.header-stats {
+    display: flex;
+    gap: 15px;
+}
+
+.header-stats .el-tag {
+    font-size: 14px;
+    padding: 8px 16px;
+}
+
+/* 侧边栏 */
+.el-aside {
+    background: #fff;
+    border-right: 1px solid #e4e7ed;
+    overflow-y: auto;
+}
+
+.el-menu {
+    border: none;
+}
+
+.table-badge {
+    margin-left: 10px;
+}
+
+/* 主内容区 */
+.el-main {
+    background: #f5f7fa;
+    padding: 20px;
+}
+
+.view-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding: 15px 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+}
+
+.view-header h2 {
+    margin: 0;
+    font-size: 20px;
+    color: #303133;
+}
+
+.table-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* 表格视图 */
+.table-view {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+}
+
+.pagination {
+    margin-top: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+/* 查询视图 */
+.query-view {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+}
+
+.query-editor {
+    margin-bottom: 20px;
+}
+
+.query-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.execution-time {
+    margin-left: auto;
+    color: #909399;
+    font-size: 14px;
+}
+
+.query-result {
+    margin-top: 20px;
+}
+
+/* 热门榜单视图 */
+.trending-view {
+    background: transparent;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* 统计视图 */
+.stats-view {
+    background: transparent;
+}
+
+.stat-card {
+    margin-bottom: 20px;
+}
+
+.stat-content {
+    text-align: center;
+    padding: 20px;
+}
+
+.stat-label {
+    font-size: 14px;
+    color: #909399;
+    margin-bottom: 10px;
+}
+
+.stat-value {
+    font-size: 32px;
+    font-weight: bold;
+    color: #303133;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .el-aside {
+        width: 100% !important;
+    }
+    
+    .header-stats {
+        display: none;
+    }
+}

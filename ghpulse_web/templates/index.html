@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GHPulse 数据查询平台</title>
+    
+    <!-- Element Plus CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    
+    <!-- 自定义样式 -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div id="app">
+        <el-container style="height: 100vh">
+            <!-- 顶部导航栏 -->
+            <el-header>
+                <div class="header-content">
+                    <h1>🚀 GHPulse 数据查询平台</h1>
+                    <div class="header-stats">
+                        <el-tag type="success">事件: {% raw %}{{ formatNumber(stats.total_events) }}{% endraw %}</el-tag>
+                        <el-tag type="primary">用户: {% raw %}{{ formatNumber(stats.total_actors) }}{% endraw %}</el-tag>
+                        <el-tag type="warning">仓库: {% raw %}{{ formatNumber(stats.total_repos) }}{% endraw %}</el-tag>
+                    </div>
+                </div>
+            </el-header>
+            
+            <el-container>
+                <!-- 左侧边栏 -->
+                <el-aside width="250px">
+                    <el-menu
+                        :default-active="activeTab"
+                        @select="handleMenuSelect"
+                    >
+                        <el-sub-menu index="tables">
+                            <template #title>
+                                <el-icon><Grid /></el-icon>
+                                <span>数据表 ({% raw %}{{ tables.length }}{% endraw %})</span>
+                            </template>
+                            <el-menu-item 
+                                v-for="table in tables" 
+                                :key="table.name"
+                                :index="'table-' + table.name"
+                            >
+                                <el-icon><Document /></el-icon>
+                                <span>{% raw %}{{ table.name }}{% endraw %}</span>
+                            </el-menu-item>
+                        </el-sub-menu>
+                        
+                        <el-menu-item index="query">
+                            <el-icon><Search /></el-icon>
+                            <span>自定义查询</span>
+                        </el-menu-item>
+                        
+                        <el-menu-item index="trending">
+                            <el-icon><TrendCharts /></el-icon>
+                            <span>热门榜单</span>
+                        </el-menu-item>
+                        
+                        <el-menu-item index="stats">
+                            <el-icon><DataAnalysis /></el-icon>
+                            <span>统计分析</span>
+                        </el-menu-item>
+                    </el-menu>
+                </el-aside>
+                
+                <!-- 主内容区 -->
+                <el-main>
+                    <!-- 表格视图 -->
+                    <div v-if="activeView === 'table'" class="table-view">
+                        <div class="view-header">
+                            <h2>{% raw %}{{ currentTable }}{% endraw %}</h2>
+                            <div class="table-actions">
+                                <el-button @click="loadTableData" :loading="loading">
+                                    <el-icon><Refresh /></el-icon>
+                                    刷新
+                                </el-button>
+                                <el-button @click="exportData">
+                                    <el-icon><Download /></el-icon>
+                                    导出
+                                </el-button>
+                            </div>
+                        </div>
+                        
+                        <el-table 
+                            :data="tableData" 
+                            stripe 
+                            border 
+                            v-loading="loading"
+                            style="width: 100%"
+                            max-height="calc(100vh - 250px)"
+                        >
+                            <el-table-column 
+                                v-for="col in tableColumns" 
+                                :key="col.field"
+                                :prop="col.field"
+                                :label="col.field"
+                                :width="getColumnWidth(col.type)"
+                                show-overflow-tooltip
+                            />
+                        </el-table>
+                        
+                        <el-pagination
+                            v-if="pagination.total > 0"
+                            class="pagination"
+                            :current-page="pagination.page"
+                            :page-size="pagination.page_size"
+                            :total="pagination.total"
+                            :page-sizes="[10, 20, 50, 100]"
+                            layout="total, sizes, prev, pager, next, jumper"
+                            @size-change="handleSizeChange"
+                            @current-change="handlePageChange"
+                        />
+                    </div>
+                    
+                    <!-- 自定义查询视图 -->
+                    <div v-if="activeView === 'query'" class="query-view">
+                        <div class="view-header">
+                            <h2>自定义SQL查询</h2>
+                        </div>
+                        
+                        <div class="query-editor">
+                            <el-input
+                                v-model="customSQL"
+                                type="textarea"
+                                :rows="10"
+                                placeholder="输入SQL查询语句（仅支持SELECT）
+示例：
+SELECT * FROM events LIMIT 10;
+SELECT COUNT(*) FROM actors WHERE total_events > 100;"
+                            />
+                            
+                            <div class="query-actions">
+                                <el-button type="primary" @click="executeQuery" :loading="loading">
+                                    <el-icon><CaretRight /></el-icon>
+                                    执行查询
+                                </el-button>
+                                <el-button @click="customSQL = ''">
+                                    <el-icon><Delete /></el-icon>
+                                    清空
+                                </el-button>
+                                <span v-if="queryResult.execution_time" class="execution-time">
+                                    执行时间: {% raw %}{{ queryResult.execution_time }}{% endraw %}s
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <div v-if="queryResult.rows" class="query-result">
+                            <el-alert 
+                                :title="`查询返回 ${queryResult.count} 行数据`" 
+                                type="success" 
+                                :closable="false"
+                            />
+                            
+                            <el-table 
+                                :data="queryResult.rows" 
+                                stripe 
+                                border 
+                                style="width: 100%; margin-top: 20px"
+                                max-height="500px"
+                            >
+                                <el-table-column 
+                                    v-for="col in queryResult.columns" 
+                                    :key="col"
+                                    :prop="col"
+                                    :label="col"
+                                    show-overflow-tooltip
+                                />
+                            </el-table>
+                        </div>
+                    </div>
+                    
+                    <!-- 热门榜单视图 -->
+                    <div v-if="activeView === 'trending'" class="trending-view">
+                        <div class="view-header">
+                            <h2>热门榜单</h2>
+                        </div>
+                        
+                        <el-row :gutter="20">
+                            <el-col :span="12">
+                                <el-card>
+                                    <template #header>
+                                        <div class="card-header">
+                                            <span>🔥 热门仓库 Top 10</span>
+                                            <el-button text @click="loadTrendingRepos">刷新</el-button>
+                                        </div>
+                                    </template>
+                                    
+                                    <el-table :data="trendingRepos" stripe>
+                                        <el-table-column prop="rank_position" label="排名" width="60" />
+                                        <el-table-column prop="repo_name" label="仓库" min-width="200" show-overflow-tooltip />
+                                        <el-table-column prop="stars_7d" label="7日⭐" width="80" />
+                                        <el-table-column prop="forks_7d" label="7日Fork" width="90" />
+                                        <el-table-column prop="prs_7d" label="7日PR" width="80" />
+                                        <el-table-column prop="score" label="总得分" width="90" />
+                                    </el-table>
+                                </el-card>
+                            </el-col>
+                            
+                            <el-col :span="12">
+                                <el-card>
+                                    <template #header>
+                                        <div class="card-header">
+                                            <span>👨‍💻 活跃开发者 Top 10</span>
+                                            <el-button text @click="loadTrendingDevelopers">刷新</el-button>
+                                        </div>
+                                    </template>
+                                    
+                                    <el-table :data="trendingDevelopers" stripe>
+                                        <el-table-column prop="rank_position" label="排名" width="60" />
+                                        <el-table-column prop="actor_login" label="开发者" min-width="150" show-overflow-tooltip />
+                                        <el-table-column prop="commits_7d" label="7日提交" width="90" />
+                                        <el-table-column prop="prs_7d" label="7日PR" width="80" />
+                                        <el-table-column prop="issues_7d" label="7日Issue" width="90" />
+                                        <el-table-column prop="activity_score" label="活跃度" width="90" />
+                                    </el-table>
+                                </el-card>
+                            </el-col>
+                        </el-row>
+                    </div>
+                    
+                    <!-- 统计分析视图 -->
+                    <div v-if="activeView === 'stats'" class="stats-view">
+                        <div class="view-header">
+                            <h2>统计分析</h2>
+                        </div>
+                        
+                        <el-row :gutter="20">
+                            <el-col :span="6" v-for="(value, key) in stats" :key="key">
+                                <el-card class="stat-card">
+                                    <div class="stat-content">
+                                        <div class="stat-label">{% raw %}{{ getStatLabel(key) }}{% endraw %}</div>
+                                        <div class="stat-value">{% raw %}{{ formatStatValue(key, value) }}{% endraw %}</div>
+                                    </div>
+                                </el-card>
+                            </el-col>
+                        </el-row>
+                        
+                        <el-card style="margin-top: 20px">
+                            <template #header>
+                                <div class="card-header">
+                                    <span>事件类型分布</span>
+                                    <el-button text @click="loadEventTypeStats">刷新</el-button>
+                                </div>
+                            </template>
+                            
+                            <el-table :data="eventTypeStats" stripe v-loading="loading">
+                                <!-- 修改这里：确保 event_type 列正确显示 -->
+                                <el-table-column prop="event_type" label="事件类型" width="200">
+                                    <template #default="scope">
+                                        <el-tag>{% raw %}{{ scope.row.event_type }}{% endraw %}</el-tag>
+                                    </template>
+                                </el-table-column>
+                                
+                                <el-table-column prop="count" label="数量" width="150">
+                                    <template #default="scope">
+                                        {% raw %}{{ scope.row.count.toLocaleString() }}{% endraw %}
+                                    </template>
+                                </el-table-column>
+                                
+                                <el-table-column label="占比">
+                                    <template #default="scope">
+                                        <div style="display: flex; align-items: center; gap: 10px;">
+                                            <el-progress 
+                                                :percentage="getPercentage(scope.row.count)" 
+                                                :color="getProgressColor(scope.$index)"
+                                                style="flex: 1;"
+                                            />
+                                            <span style="min-width: 60px; text-align: right;">
+                                                {% raw %}{{ getPercentage(scope.row.count) }}{% endraw %}%
+                                            </span>
+                                        </div>
+                                    </template>
+                                </el-table-column>
+                            </el-table>
+                        </el-card>
+                    </div>
+                </el-main>
+            </el-container>
+        </el-container>
+    </div>
+
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Element Plus -->
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- Element Plus Icons -->
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <!-- Axios -->
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    
+    <!-- 应用脚本 -->
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ range(1, 10000) | random }}"></script>
+</body>
+</html>
