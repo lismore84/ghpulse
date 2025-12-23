@@ -1,2 +1,8 @@
 .env
 **/.env
+./test_api.py
+./db_init/db_user_init.sql
+gh_archive_ingest.log
+stats_update.log
+*.log
+./*.log
