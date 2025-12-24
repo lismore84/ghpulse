@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-GH Archive数据摄取脚本 - 双连接版本
+GH Archive数据摄取脚本
 admin_user: 管理触发器
 ingest_user: 插入数据
 """
@@ -17,6 +15,7 @@ from dotenv import load_dotenv
 import pymysql
 from pymysql import cursors
 import requests
+import argparse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +35,6 @@ class DualConnectionIngestor:
     
     def __init__(self):
         load_dotenv()
-        
         # 数据写入连接配置（ingest_user）
         self.ingest_config = {
             'host': os.getenv('DB_HOST'),
@@ -49,7 +47,6 @@ class DualConnectionIngestor:
             'autocommit': False,
             'connect_timeout': 30
         }
-        
         # 管理员连接配置（admin_user）
         self.admin_config = {
             'host': os.getenv('DB_HOST'),
@@ -62,7 +59,6 @@ class DualConnectionIngestor:
             'autocommit': False,
             'connect_timeout': 30
         }
-        
         self._validate_config()
         
         self.existing_actors: Set[int] = set()
@@ -145,8 +141,8 @@ class DualConnectionIngestor:
             cursor = admin_conn.cursor()
             logger.info("正在重新启用触发器...")
             
-            # 只重新创建验证触发器
-            trigger_sql = """
+            # 重新创建验证触发器
+            validate_trigger_sql = """
                 CREATE TRIGGER trg_validate_event_insert
                 BEFORE INSERT ON events
                 FOR EACH ROW
@@ -166,10 +162,92 @@ class DualConnectionIngestor:
                 END
             """
             
+            # 重新创建事件后统计更新触发器
+            after_insert_trigger_sql = """
+                CREATE TRIGGER trg_after_event_insert
+                AFTER INSERT ON events
+                FOR EACH ROW
+                BEGIN
+                    -- 更新用户统计
+                    UPDATE actors 
+                    SET last_active_at = NEW.created_at,
+                        total_events = total_events + 1
+                    WHERE actor_id = NEW.actor_id;
+                    
+                    -- 更新仓库统计
+                    UPDATE repos
+                    SET last_event_at = NEW.created_at,
+                        total_events = total_events + 1
+                    WHERE repo_id = NEW.repo_id;
+                    
+                    -- 处理Star事件
+                    IF NEW.event_type = 'WatchEvent' THEN
+                        UPDATE repos 
+                        SET total_stars = total_stars + 1 
+                        WHERE repo_id = NEW.repo_id;
+                    END IF;
+                    
+                    -- 处理Fork事件
+                    IF NEW.event_type = 'ForkEvent' THEN
+                        UPDATE repos 
+                        SET total_forks = total_forks + 1 
+                        WHERE repo_id = NEW.repo_id;
+                    END IF;
+                END
+            """
+            
+            # 重新创建用户仓库关联更新触发器
+            relation_trigger_sql = """
+                CREATE TRIGGER trg_update_user_repo_relation
+                AFTER INSERT ON events
+                FOR EACH ROW
+                BEGIN
+                    DECLARE v_relation_type VARCHAR(50);
+                    
+                    -- 确定关联类型
+                    SET v_relation_type = CASE 
+                        WHEN NEW.event_type = 'WatchEvent' THEN 'star'
+                        WHEN NEW.event_type = 'ForkEvent' THEN 'fork'
+                        ELSE 'contributor'
+                    END;
+                    
+                    -- 插入或更新关联关系
+                    INSERT INTO user_repo_relation (
+                        actor_id, 
+                        repo_id, 
+                        relation_type, 
+                        relation_time,
+                        first_event_at,
+                        last_event_at,
+                        event_count
+                    )
+                    VALUES (
+                        NEW.actor_id,
+                        NEW.repo_id,
+                        v_relation_type,
+                        NEW.created_at,
+                        NEW.created_at,
+                        NEW.created_at,
+                        1
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        last_event_at = NEW.created_at,
+                        event_count = event_count + 1;
+                END
+            """
+            
+            # 删除所有触发器
             cursor.execute("DROP TRIGGER IF EXISTS trg_validate_event_insert")
-            cursor.execute(trigger_sql)
+            cursor.execute("DROP TRIGGER IF EXISTS trg_after_event_insert")
+            cursor.execute("DROP TRIGGER IF EXISTS trg_update_user_repo_relation")
+            
+            # 创建所有触发器
+            cursor.execute(validate_trigger_sql)
+            cursor.execute(after_insert_trigger_sql)
+            cursor.execute(relation_trigger_sql)
+            
             admin_conn.commit()
-            logger.info("  ✓ 验证触发器已重新启用")
+            logger.info("  ✓ 所有触发器已重新启用")
             
         except Exception as e:
             logger.warning(f"  ⚠ 重新启用触发器失败: {e}")
@@ -177,103 +255,7 @@ class DualConnectionIngestor:
             if admin_conn:
                 admin_conn.close()
     
-    def update_statistics_batch(self, target_date):
-        """批量更新统计数据（使用ingest连接）"""
-        ingest_conn = None
-        try:
-            ingest_conn = self.get_ingest_connection()
-            cursor = ingest_conn.cursor()
-            logger.info("正在批量更新统计数据...")
-            
-            # 更新actors统计
-            logger.info("  更新用户统计...")
-            cursor.execute("""
-                UPDATE actors a
-                INNER JOIN (
-                    SELECT 
-                        actor_id,
-                        MAX(created_at) AS last_active,
-                        COUNT(*) AS event_count
-                    FROM events
-                    WHERE created_at_date = %s
-                    GROUP BY actor_id
-                ) e ON a.actor_id = e.actor_id
-                SET 
-                    a.last_active_at = GREATEST(COALESCE(a.last_active_at, '1970-01-01'), e.last_active),
-                    a.total_events = a.total_events + e.event_count
-            """, (target_date,))
-            logger.info(f"    更新了 {cursor.rowcount} 个用户")
-            
-            # 更新repos统计
-            logger.info("  更新仓库统计...")
-            cursor.execute("""
-                UPDATE repos r
-                INNER JOIN (
-                    SELECT 
-                        repo_id,
-                        MAX(created_at) AS last_event,
-                        COUNT(*) AS event_count,
-                        SUM(CASE WHEN event_type = 'WatchEvent' THEN 1 ELSE 0 END) AS stars,
-                        SUM(CASE WHEN event_type = 'ForkEvent' THEN 1 ELSE 0 END) AS forks
-                    FROM events
-                    WHERE created_at_date = %s
-                    GROUP BY repo_id
-                ) e ON r.repo_id = e.repo_id
-                SET 
-                    r.last_event_at = GREATEST(COALESCE(r.last_event_at, '1970-01-01'), e.last_event),
-                    r.total_events = r.total_events + e.event_count,
-                    r.total_stars = r.total_stars + e.stars,
-                    r.total_forks = r.total_forks + e.forks
-            """, (target_date,))
-            logger.info(f"    更新了 {cursor.rowcount} 个仓库")
-            
-            # 更新user_repo_relation（修改：只插入存在的actor_id和repo_id）
-            logger.info("  更新用户-仓库关联...")
-            cursor.execute("""
-                INSERT INTO user_repo_relation (
-                    actor_id, repo_id, relation_type, relation_time,
-                    first_event_at, last_event_at, event_count
-                )
-                SELECT 
-                    e.actor_id,
-                    e.repo_id,
-                    CASE 
-                        WHEN e.event_type = 'WatchEvent' THEN 'star'
-                        WHEN e.event_type = 'ForkEvent' THEN 'fork'
-                        ELSE 'contributor'
-                    END AS relation_type,
-                    MIN(e.created_at) AS relation_time,
-                    MIN(e.created_at) AS first_event_at,
-                    MAX(e.created_at) AS last_event_at,
-                    COUNT(*) AS event_count
-                FROM events e
-                INNER JOIN actors a ON e.actor_id = a.actor_id  -- 确保actor存在
-                INNER JOIN repos r ON e.repo_id = r.repo_id      -- 确保repo存在
-                WHERE e.created_at_date = %s
-                GROUP BY e.actor_id, e.repo_id, 
-                    CASE 
-                        WHEN e.event_type = 'WatchEvent' THEN 'star'
-                        WHEN e.event_type = 'ForkEvent' THEN 'fork'
-                        ELSE 'contributor'
-                    END
-                ON DUPLICATE KEY UPDATE
-                    last_event_at = VALUES(last_event_at),
-                    event_count = event_count + VALUES(event_count)
-            """, (target_date,))
-            logger.info(f"    更新了 {cursor.rowcount} 条关联")
-            
-            ingest_conn.commit()
-            logger.info("  ✓ 统计数据更新完成")
-            
-        except Exception as e:
-            if ingest_conn:
-                ingest_conn.rollback()
-            logger.error(f"  ✗ 统计更新失败: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            if ingest_conn:
-                ingest_conn.close()
+
     
     def load_existing_ids(self, conn):
         """预加载已存在的ID"""
@@ -352,13 +334,7 @@ class DualConnectionIngestor:
             if ingest_conn:
                 ingest_conn.close()
             
-            # 步骤6: 批量更新统计（单独连接）
-            try:
-                self.update_statistics_batch(target_date)
-            except Exception as e:
-                logger.error(f"统计更新失败: {e}")
-            
-            # 步骤7: 使用admin重新启用触发器
+            # 步骤6: 使用admin重新启用触发器
             try:
                 self.enable_triggers()
             except Exception as e:
@@ -617,10 +593,43 @@ class DualConnectionIngestor:
 
 
 if __name__ == '__main__':
-    ingestor = DualConnectionIngestor()
+    parser = argparse.ArgumentParser(description='GH Archive数据摄取脚本')
+    parser.add_argument('date', type=str, help='日期时间，格式: YYYY-MM-DD-HH (例如: 2025-12-24-15) 或 YYYY-MM-DD (处理整天)')
     
-    # 处理单个小时
-    ingestor.ingest_hour(2025, 12, 21, 15)
+    args = parser.parse_args()
     
-    # 或处理整天
-    # ingestor.ingest_day(2024, 1, 1)
+    # 解析日期字符串
+    date_parts = args.date.split('-')
+    
+    if len(date_parts) == 4:
+        # 处理单个小时: YYYY-MM-DD-HH
+        try:
+            year = int(date_parts[0])
+            month = int(date_parts[1])
+            day = int(date_parts[2])
+            hour = int(date_parts[3])
+            
+            if 0 <= hour <= 23:
+                ingestor = DualConnectionIngestor()
+                ingestor.ingest_hour(year, month, day, hour)
+            else:
+                print("错误: 小时必须在 0-23 之间")
+                exit(1)
+        except ValueError:
+            print("错误: 日期格式不正确，请使用 YYYY-MM-DD-HH 格式")
+            exit(1)
+    elif len(date_parts) == 3:
+        # 处理整天: YYYY-MM-DD
+        try:
+            year = int(date_parts[0])
+            month = int(date_parts[1])
+            day = int(date_parts[2])
+            
+            ingestor = DualConnectionIngestor()
+            ingestor.ingest_day(year, month, day)
+        except ValueError:
+            print("错误: 日期格式不正确，请使用 YYYY-MM-DD 格式")
+            exit(1)
+    else:
+        print("错误: 日期格式不正确，请使用 YYYY-MM-DD-HH (单个小时) 或 YYYY-MM-DD (整天) 格式")
+        exit(1)

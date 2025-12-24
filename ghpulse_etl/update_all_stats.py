@@ -10,15 +10,7 @@ GHPulse 完整统计更新脚本
 3. actor_stats_cache - 用户统计缓存
 4. repo_stats_cache - 仓库统计缓存
 5. event_stats_daily - 每日事件统计
-
-使用方式：
-  python update_all_stats.py              # 更新所有表
-  python update_all_stats.py --table hot_repos  # 只更新指定表
-  python update_all_stats.py --days 7     # 更新最近7天的每日统计
-
-定时任务示例（Linux crontab）：
-  0 * * * * /usr/bin/python3 /path/to/update_all_stats.py >> /var/log/ghpulse_stats.log 2>&1
-  （每小时运行一次）
+6. base_stats - 基础统计数据
 """
 
 import pymysql
@@ -26,7 +18,6 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import logging
-import argparse
 import sys
 
 # 配置日志
@@ -416,6 +407,103 @@ def update_repo_stats_cache():
         conn.close()
 
 
+def update_base_statistics():
+    """更新基础统计数据（actors、repos表的统计信息）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        logger.info("=" * 60)
+        logger.info("📊 更新基础统计数据")
+        logger.info("=" * 60)
+        
+        # 更新actors统计
+        logger.info("  更新用户统计...")
+        cursor.execute("""
+            UPDATE actors a
+            INNER JOIN (
+                SELECT 
+                    actor_id,
+                    MAX(created_at) AS last_active,
+                    COUNT(*) AS event_count
+                FROM events
+                GROUP BY actor_id
+            ) e ON a.actor_id = e.actor_id
+            SET 
+                a.last_active_at = GREATEST(COALESCE(a.last_active_at, '1970-01-01'), e.last_active),
+                a.total_events = a.total_events + e.event_count
+        """)
+        logger.info(f"    更新了 {cursor.rowcount} 个用户")
+        
+        # 更新repos统计
+        logger.info("  更新仓库统计...")
+        cursor.execute("""
+            UPDATE repos r
+            INNER JOIN (
+                SELECT 
+                    repo_id,
+                    MAX(created_at) AS last_event,
+                    COUNT(*) AS event_count,
+                    SUM(CASE WHEN event_type = 'WatchEvent' THEN 1 ELSE 0 END) AS stars,
+                    SUM(CASE WHEN event_type = 'ForkEvent' THEN 1 ELSE 0 END) AS forks
+                FROM events
+                GROUP BY repo_id
+            ) e ON r.repo_id = e.repo_id
+            SET 
+                r.last_event_at = GREATEST(COALESCE(r.last_event_at, '1970-01-01'), e.last_event),
+                r.total_events = r.total_events + e.event_count,
+                r.total_stars = r.total_stars + e.stars,
+                r.total_forks = r.total_forks + e.forks
+        """)
+        logger.info(f"    更新了 {cursor.rowcount} 个仓库")
+        
+        # 更新用户-仓库关联
+        logger.info("  更新用户-仓库关联...")
+        cursor.execute("""
+            INSERT INTO user_repo_relation (
+                actor_id, repo_id, relation_type, relation_time,
+                first_event_at, last_event_at, event_count
+            )
+            SELECT 
+                e.actor_id,
+                e.repo_id,
+                CASE 
+                    WHEN e.event_type = 'WatchEvent' THEN 'star'
+                    WHEN e.event_type = 'ForkEvent' THEN 'fork'
+                    ELSE 'contributor'
+                END AS relation_type,
+                MIN(e.created_at) AS relation_time,
+                MIN(e.created_at) AS first_event_at,
+                MAX(e.created_at) AS last_event_at,
+                COUNT(*) AS event_count
+            FROM events e
+            INNER JOIN actors a ON e.actor_id = a.actor_id  -- 确保actor存在
+            INNER JOIN repos r ON e.repo_id = r.repo_id      -- 确保repo存在
+            GROUP BY e.actor_id, e.repo_id, 
+                CASE 
+                    WHEN e.event_type = 'WatchEvent' THEN 'star'
+                    WHEN e.event_type = 'ForkEvent' THEN 'fork'
+                    ELSE 'contributor'
+                END
+            ON DUPLICATE KEY UPDATE
+                last_event_at = VALUES(last_event_at),
+                event_count = event_count + VALUES(event_count)
+        """)
+        logger.info(f"    更新了 {cursor.rowcount} 条关联")
+        
+        conn.commit()
+        logger.info("  ✓ 基础统计数据更新完成")
+        
+    except Exception as e:
+        logger.error(f"  ✗ 基础统计更新失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def update_event_stats_daily(days=30):
     """
     更新每日事件统计
@@ -557,76 +645,24 @@ def show_summary():
 
 
 def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(
-        description='GHPulse 统计更新脚本',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  python update_all_stats.py                    # 更新所有表
-  python update_all_stats.py --table hot_repos  # 只更新热门仓库
-  python update_all_stats.py --days 7           # 更新最近7天的每日统计
-  python update_all_stats.py --skip-cache       # 跳过缓存表（节省时间）
-        """
-    )
-    
-    parser.add_argument(
-        '--table',
-        choices=['hot_repos', 'active_developers', 'actor_stats_cache', 
-                 'repo_stats_cache', 'event_stats_daily', 'all'],
-        default='all',
-        help='指定要更新的表（默认: all）'
-    )
-    
-    parser.add_argument(
-        '--days',
-        type=int,
-        default=30,
-        help='每日统计更新的天数（默认: 30）'
-    )
-    
-    parser.add_argument(
-        '--skip-cache',
-        action='store_true',
-        help='跳过缓存表更新（只更新榜单）'
-    )
-    
-    args = parser.parse_args()
+    """主函数 - 执行所有统计更新"""
     
     start_time = datetime.now()
     
-    logger.info("\n" + "🚀 " + "=" * 58)
-    logger.info("🚀 GHPulse 统计更新任务开始")
-    logger.info("🚀 " + "=" * 58)
+    logger.info("\n" + " 🚀 " + "=" * 58)
+    logger.info(" 🚀 GHPulse 统计更新任务开始")
+    logger.info(" 🚀 " + "=" * 58)
     logger.info(f"开始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"更新范围: {args.table}")
-    if args.skip_cache:
-        logger.info("模式: 快速模式（跳过缓存表）")
+    logger.info("更新范围: 所有统计数据")
     logger.info("")
     
-    # 根据参数执行更新
-    if args.table == 'all':
-        update_hot_repos()
-        update_active_developers()
-        
-        if not args.skip_cache:
-            update_actor_stats_cache()
-            update_repo_stats_cache()
-        else:
-            logger.info("⏭️  跳过缓存表更新")
-        
-        update_event_stats_daily(args.days)
-        
-    elif args.table == 'hot_repos':
-        update_hot_repos()
-    elif args.table == 'active_developers':
-        update_active_developers()
-    elif args.table == 'actor_stats_cache':
-        update_actor_stats_cache()
-    elif args.table == 'repo_stats_cache':
-        update_repo_stats_cache()
-    elif args.table == 'event_stats_daily':
-        update_event_stats_daily(args.days)
+    # 无条件更新所有统计数据
+    update_hot_repos()
+    update_active_developers()
+    update_actor_stats_cache()
+    update_repo_stats_cache()
+    update_event_stats_daily(30)  # 默认更新30天的每日统计
+    update_base_statistics()  # 更新基础统计数据
     
     # 显示摘要
     show_summary()
@@ -638,8 +674,6 @@ def main():
     logger.info("=" * 60)
     logger.info("\n💡 提示:")
     logger.info("  - 可设置定时任务每小时运行: 0 * * * * python update_all_stats.py")
-    logger.info("  - 快速更新（跳过缓存）: python update_all_stats.py --skip-cache")
-    logger.info("  - 只更新榜单: python update_all_stats.py --table hot_repos")
     logger.info("=" * 60)
 
 

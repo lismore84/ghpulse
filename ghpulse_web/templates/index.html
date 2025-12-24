@@ -98,7 +98,7 @@
                                 :label="col.field"
                                 :width="getColumnWidth(col.type)"
                                 show-overflow-tooltip
-                            />
+                            ></el-table-column>
                         </el-table>
                         
                         <el-pagination
@@ -166,7 +166,7 @@ SELECT COUNT(*) FROM actors WHERE total_events > 100;"
                                     :prop="col"
                                     :label="col"
                                     show-overflow-tooltip
-                                />
+                                ></el-table-column>
                             </el-table>
                         </div>
                     </div>
@@ -187,13 +187,13 @@ SELECT COUNT(*) FROM actors WHERE total_events > 100;"
                                         </div>
                                     </template>
                                     
-                                    <el-table :data="trendingRepos" stripe>
-                                        <el-table-column prop="rank_position" label="排名" width="60" />
-                                        <el-table-column prop="repo_name" label="仓库" min-width="200" show-overflow-tooltip />
-                                        <el-table-column prop="stars_7d" label="7日⭐" width="80" />
-                                        <el-table-column prop="forks_7d" label="7日Fork" width="90" />
-                                        <el-table-column prop="prs_7d" label="7日PR" width="80" />
-                                        <el-table-column prop="score" label="总得分" width="90" />
+                                    <el-table ref="trendingReposTableRef" :data="trendingRepos" stripe style="width: 100%">
+                                        <el-table-column prop="rank_position" label="排名" width="60"></el-table-column>
+                                        <el-table-column prop="repo_name" label="仓库" min-width="200" show-overflow-tooltip></el-table-column>
+                                        <el-table-column prop="stars_7d" label="7日⭐" width="80"></el-table-column>
+                                        <el-table-column prop="forks_7d" label="7日Fork" width="90"></el-table-column>
+                                        <el-table-column prop="prs_7d" label="7日PR" width="80"></el-table-column>
+                                        <el-table-column prop="score" label="总得分" width="90"></el-table-column>
                                     </el-table>
                                 </el-card>
                             </el-col>
@@ -207,13 +207,13 @@ SELECT COUNT(*) FROM actors WHERE total_events > 100;"
                                         </div>
                                     </template>
                                     
-                                    <el-table :data="trendingDevelopers" stripe>
-                                        <el-table-column prop="rank_position" label="排名" width="60" />
-                                        <el-table-column prop="actor_login" label="开发者" min-width="150" show-overflow-tooltip />
-                                        <el-table-column prop="commits_7d" label="7日提交" width="90" />
-                                        <el-table-column prop="prs_7d" label="7日PR" width="80" />
-                                        <el-table-column prop="issues_7d" label="7日Issue" width="90" />
-                                        <el-table-column prop="activity_score" label="活跃度" width="90" />
+                                    <el-table ref="trendingDevelopersTableRef" :data="trendingDevelopers" stripe style="width: 100%">
+                                        <el-table-column prop="rank_position" label="排名" width="60"></el-table-column>
+                                        <el-table-column prop="actor_login" label="开发者" min-width="150" show-overflow-tooltip></el-table-column>
+                                        <el-table-column prop="commits_7d" label="7日提交" width="90"></el-table-column>
+                                        <el-table-column prop="prs_7d" label="7日PR" width="80"></el-table-column>
+                                        <el-table-column prop="issues_7d" label="7日Issue" width="90"></el-table-column>
+                                        <el-table-column prop="activity_score" label="活跃度" width="90"></el-table-column>
                                     </el-table>
                                 </el-card>
                             </el-col>

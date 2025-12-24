@@ -1,4 +1,4 @@
-const { createApp, ref, reactive, onMounted } = Vue;
+const { createApp, ref, reactive, onMounted, nextTick } = Vue;
 
 // API基础URL（相对路径）
 const API_BASE_URL = '/api';
@@ -42,6 +42,15 @@ const app = createApp({
         const trendingRepos = ref([]);
         const trendingDevelopers = ref([]);
         const eventTypeStats = ref([]);
+
+        const trendingReposTableRef = ref(null);
+        const trendingDevelopersTableRef = ref(null);
+
+        const relayoutTrendingTables = async () => {
+            await nextTick();
+            trendingReposTableRef.value?.doLayout?.();
+            trendingDevelopersTableRef.value?.doLayout?.();
+        };
         
         // API请求封装
         const api = {
@@ -153,6 +162,9 @@ const app = createApp({
                     if (result.data.length === 0) {
                         ElMessage.warning('暂无热门仓库数据');
                     }
+                    if (activeView.value === 'trending') {
+                        await relayoutTrendingTables();
+                    }
                 }
             } catch (error) {
                 console.error('加载热门仓库失败:', error);
@@ -173,6 +185,9 @@ const app = createApp({
                     console.log('活跃开发者数据详情:', JSON.stringify(result.data.slice(0, 2), null, 2));
                     if (result.data.length === 0) {
                         ElMessage.warning('暂无活跃开发者数据');
+                    }
+                    if (activeView.value === 'trending') {
+                        await relayoutTrendingTables();
                     }
                 }
             } catch (error) {
@@ -223,6 +238,7 @@ const app = createApp({
                 activeView.value = 'trending';
                 loadTrendingRepos();
                 loadTrendingDevelopers();
+                relayoutTrendingTables();
             } else if (index === 'stats') {
                 activeView.value = 'stats';
                 loadEventTypeStats();
@@ -386,6 +402,8 @@ const app = createApp({
             trendingRepos,
             trendingDevelopers,
             eventTypeStats,
+            trendingReposTableRef,
+            trendingDevelopersTableRef,
             
             // 方法
             handleMenuSelect,
@@ -397,6 +415,7 @@ const app = createApp({
             loadTrendingDevelopers,
             loadEventTypeStats,
             exportData,
+            relayoutTrendingTables,
             
             // 工具函数
             formatNumber,
